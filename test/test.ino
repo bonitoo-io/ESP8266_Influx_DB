@@ -19,7 +19,7 @@ String chipId = String(ESP.getChipId());
 String deviceName = "ESP8266";
 #endif
 
-#define INFLUXDB_CLIENT_TESTING_URL "http://192.168.88.36:999"
+#define INFLUXDB_CLIENT_TESTING_URL "http://192.168.88.142:999"
 #define INFLUXDB_CLIENT_TESTING_ORG "my-org"
 #define INFLUXDB_CLIENT_TESTING_BUC "my-bucket"
 #define INFLUXDB_CLIENT_TESTING_TOK "1234567890"
@@ -46,8 +46,8 @@ void setup() {
 
     //tests
     testPoint();
-    testInit();
     testBasicFunction();
+    testInit();
     testFailedWrites();
     testTimestamp();
     testRetryOnFailedConnection();
