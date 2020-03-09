@@ -39,9 +39,24 @@ static const char UnitialisedMessage[] PROGMEM = "Unconfigured instance";
 // This cannot be put to PROGMEM due to the way how it used
 static const char RetryAfter[] = "Retry-After";
 
+class ConnectionInfo {
+public:    
+    HTTPClient httpClient;
+    WiFiClient *wifiClient = nullptr;
+private:    
+#ifdef  ESP8266
+  BearSSL::X509List *_cert = nullptr;   
+#endif
+public:
+     ConnectionInfo(String serverUrl, const char *certInfo = nullptr, bool preserveConnection = false) ;  
+     ~ConnectionInfo();
+};
+
+
 static String escapeKey(String key);
 static String escapeValue(const char *value);
 static String escapeJSONString(String &value);
+
 
 static String precisionToString(WritePrecision precision) {
     switch(precision) {
@@ -56,6 +71,41 @@ static String precisionToString(WritePrecision precision) {
         default:
             return "";
     }
+}
+
+ConnectionInfo::ConnectionInfo(String serverUrl, const char * certInfo, bool preserveConnection) {
+    bool https = serverUrl.startsWith("https");
+    if(https) {
+#if defined(ESP8266)         
+        BearSSL::WiFiClientSecure *wifiClientSec = new BearSSL::WiFiClientSecure;
+        if(certInfo && strlen_P(certInfo) > 0) {
+            if(strlen_P(certInfo) > 60 ) { //differentiate fingerprint and cert
+                _cert = new BearSSL::X509List(certInfo); 
+                wifiClientSec->setTrustAnchors(_cert);
+            } else {
+                wifiClientSec->setFingerprint(certInfo);
+            }
+         }
+#elif defined(ESP32)
+        WiFiClientSecure *wifiClientSec = new WiFiClientSecure;  
+        if(certInfo && strlen_P(certInfo) > 0) { 
+              wifiClientSec->setCACert(certInfo);
+         }
+#endif    
+        wifiClient = wifiClientSec;
+    } else {
+        wifiClient = new WiFiClient;
+    }
+    httpClient.setReuse(preserveConnection);
+}
+
+ConnectionInfo::~ConnectionInfo() {
+#if defined(ESP8266)     
+    if(_cert) {
+        delete _cert;
+        _cert = nullptr;
+    }
+#endif
 }
 
 Point::Point(String measurement):
@@ -183,29 +233,7 @@ bool InfluxDBClient::init() {
         _serverUrl = _serverUrl.substring(0,_serverUrl.length()-1);
     }
     setUrls();
-    bool https = _serverUrl.startsWith("https");
-    if(https) {
-#if defined(ESP8266)         
-        BearSSL::WiFiClientSecure *wifiClientSec = new BearSSL::WiFiClientSecure;
-        if(_certInfo && strlen_P(_certInfo) > 0) {
-            if(strlen_P(_certInfo) > 60 ) { //differentiate fingerprint and cert
-                _cert = new BearSSL::X509List(_certInfo); 
-                wifiClientSec->setTrustAnchors(_cert);
-            } else {
-                wifiClientSec->setFingerprint(_certInfo);
-            }
-         }
-#elif defined(ESP32)
-        WiFiClientSecure *wifiClientSec = new WiFiClientSecure;  
-        if(_certInfo && strlen_P(_certInfo) > 0) { 
-              wifiClientSec->setCACert(_certInfo);
-         }
-#endif    
-        _wifiClient = wifiClientSec;
-    } else {
-        _wifiClient = new WiFiClient;
-    }
-    _httpClient.setReuse(false);
+   
     return true;
 }
 
@@ -221,17 +249,6 @@ InfluxDBClient::~InfluxDBClient() {
 }
 
 void InfluxDBClient::clean() {
-    // if(_wifiClient) {
-    //     delete _wifiClient;
-    //     _wifiClient = nullptr;
-    // }
-     _wifiClient = nullptr;
-#if defined(ESP8266)     
-    if(_cert) {
-        delete _cert;
-        _cert = nullptr;
-    }
-#endif
     _lastStatusCode = 0;
     _lastErrorResponse = "";
     _lastFlushed = 0;
@@ -276,7 +293,7 @@ void InfluxDBClient::setWriteOptions(WritePrecision precision, uint16_t batchSiz
         resetBuffer();
     }
     _flushInterval = flushInterval;
-    _httpClient.setReuse(preserveConnection);
+    _preserveConnection = preserveConnection;
 }
 
 void InfluxDBClient::resetBuffer() {
@@ -448,7 +465,7 @@ char *InfluxDBClient::prepareBatch(int &size) {
 }
 
 bool InfluxDBClient::validateConnection() {
-    if(!_wifiClient && !init()) {
+    if(!init()) {
         _lastStatusCode = 0;
         _lastErrorResponse = FPSTR(UnitialisedMessage);
         return false;
@@ -457,66 +474,67 @@ bool InfluxDBClient::validateConnection() {
     String url = _serverUrl + (_dbVersion==2?"/ready":"/ping?verbose=true");
     INFLUXDB_CLIENT_DEBUG("[D] Validating connection to %s\n", url.c_str());
 
-    if(!_httpClient.begin(*_wifiClient, url)) {
+    ConnectionInfo conn(_serverUrl, _certInfo, _preserveConnection);
+    if(!conn.httpClient.begin(*conn.wifiClient, url)) {
         INFLUXDB_CLIENT_DEBUG("[E] begin failed\n");
         return false;
     }
-    _httpClient.addHeader(F("Accept"), F("application/json"));
+    conn.httpClient.addHeader(F("Accept"), F("application/json"));
     
-    _lastStatusCode = _httpClient.GET();
+    _lastStatusCode = conn.httpClient.GET();
 
    _lastErrorResponse = "";
     
-    postRequest(200);
+    postRequest(conn.httpClient, 200);
 
-    _httpClient.end();
+    conn.httpClient.end();
 
     return _lastStatusCode == 200;
 }
 
-void InfluxDBClient::preRequest() {
+void InfluxDBClient::preRequest(HTTPClient &httpClient) {
     if(_authToken.length() > 0) {
-        _httpClient.addHeader(F("Authorization"), "Token " + _authToken);
+        httpClient.addHeader(F("Authorization"), "Token " + _authToken);
     }
     const char * headerKeys[] = {RetryAfter} ;
-    _httpClient.collectHeaders(headerKeys, 1);
+    httpClient.collectHeaders(headerKeys, 1);
 }
 
 int InfluxDBClient::postData(const char *data) {
-    if(!_wifiClient && !init()) {
+    if(!init()) {
         _lastStatusCode = 0;
         _lastErrorResponse = FPSTR(UnitialisedMessage);
         return 0;
     }
     if(data) {
+        ConnectionInfo conn(_serverUrl, _certInfo, _preserveConnection);
         INFLUXDB_CLIENT_DEBUG("[D] Writing to %s\n", _writeUrl.c_str());
-        if(!_httpClient.begin(*_wifiClient, _writeUrl)) {
+        if(!conn.httpClient.begin(*conn.wifiClient, _writeUrl)) {
             INFLUXDB_CLIENT_DEBUG("[E] Begin failed\n");
             return false;
         }
         INFLUXDB_CLIENT_DEBUG("[D] Sending:\n%s\n", data);       
 
-        _httpClient.addHeader(F("Content-Type"), F("text/plain"));   
+        conn.httpClient.addHeader(F("Content-Type"), F("text/plain"));   
         
-        preRequest();        
+        preRequest(conn.httpClient);        
         
-        _lastStatusCode = _httpClient.POST((uint8_t*)data, strlen(data));
+        _lastStatusCode = conn.httpClient.POST((uint8_t*)data, strlen(data));
         
-        postRequest(204);
-
+        postRequest(conn.httpClient, 204);
         
-        _httpClient.end();
+        conn.httpClient.end();
     } 
     return _lastStatusCode;
 }
 
-void InfluxDBClient::postRequest(int expectedStatusCode) {
+void InfluxDBClient::postRequest(HTTPClient &httpClient, int expectedStatusCode) {
     _lastRequestTime = millis();
      INFLUXDB_CLIENT_DEBUG("[D] HTTP status code - %d\n", _lastStatusCode);
     if(_lastStatusCode == 429 || _lastStatusCode == 503) { //retryable 
         int retry = 0;
-        if(_httpClient.hasHeader(RetryAfter)) {
-            retry = _httpClient.header(RetryAfter).toInt();
+        if(httpClient.hasHeader(RetryAfter)) {
+            retry = httpClient.header(RetryAfter).toInt();
             if(retry > 0 ) {
                 _lastRetryAfter = retry;
                  INFLUXDB_CLIENT_DEBUG("[D] Reply after - %d\n", _lastRetryAfter);
@@ -531,10 +549,10 @@ void InfluxDBClient::postRequest(int expectedStatusCode) {
     _lastErrorResponse = "";
     if(_lastStatusCode != expectedStatusCode) {
         if(_lastStatusCode > 0) {
-            _lastErrorResponse = _httpClient.getString();
+            _lastErrorResponse = httpClient.getString();
             INFLUXDB_CLIENT_DEBUG("[D] Response:\n%s\n", _lastErrorResponse.c_str());
         } else {
-            _lastErrorResponse = _httpClient.errorToString(_lastStatusCode);
+            _lastErrorResponse = httpClient.errorToString(_lastStatusCode);
             INFLUXDB_CLIENT_DEBUG("[E] Error - %s\n", _lastErrorResponse.c_str());
         }
     }

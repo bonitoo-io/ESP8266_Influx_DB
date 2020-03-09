@@ -187,9 +187,9 @@ class InfluxDBClient {
     // Returns true in case of success, otherwise false
     bool init();
     // Sets request params
-    void preRequest();
+    void preRequest(HTTPClient &httpClient);
     // Handles response
-    void postRequest(int expectedStatusCode);
+    void postRequest(HTTPClient &httpClient, int expectedStatusCode);
     // Cleans instances
     void clean();
   protected:
@@ -206,6 +206,8 @@ class InfluxDBClient {
     String _writeUrl;
     // Points timestamp precision. 
     WritePrecision _writePrecision = WritePrecision::NoTime;
+    // True, if HTTP should reuse connection between calls
+    bool _preserveConnection = false;
     // Number of points that will be written to the databases at once. 
     // Default 1 (immediate write, no batching)
     uint16_t _batchSize = 1;
@@ -230,10 +232,6 @@ class InfluxDBClient {
     int _lastStatusCode = 0;
     // Server reponse or library error message for last failed request
     String _lastErrorResponse;
-    // Underlying HTTPClient instance 
-    HTTPClient _httpClient;
-    // Underlying conenction object 
-    WiFiClient *_wifiClient = nullptr;
     // Certificate info
     const char *_certInfo = nullptr;
     // Version of InfluxDB 1 or 2
