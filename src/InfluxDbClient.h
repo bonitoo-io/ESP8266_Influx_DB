@@ -27,7 +27,7 @@
 #ifndef _INFLUXDB_CLIENT_H_
 #define _INFLUXDB_CLIENT_H_
 
-#define INFLUXDB_CLIENT_VERSION "3.1.0"
+#define INFLUXDB_CLIENT_VERSION "3.1.0-memory-tunning"
 
 #include "Arduino.h"
 
@@ -211,7 +211,7 @@ class InfluxDBClient {
     // Default 1 (immediate write, no batching)
     uint16_t _batchSize = 1;
     // Points buffer
-    String *_pointsBuffer = nullptr;
+    String **_pointsBuffer = nullptr;
     // Rewrites buffer size - maximum number of record to keep.
     // When max size is reached, oldest records are overwritten
     uint16_t _bufferSize = 5;
@@ -252,9 +252,11 @@ class InfluxDBClient {
     void setUrls();
     // Ensures buffer has required size
     void reserveBuffer(int size);
+    // Inits buffer
+    void initBuffer();
 #ifdef INFLUXDB_CLIENT_TESTING
 public:
-    String *getBuffer() { return _pointsBuffer; }
+    String **getBuffer() { return _pointsBuffer; }
     void setServerUrl(const char *serverUrl) {
       _serverUrl = serverUrl;
       setUrls();

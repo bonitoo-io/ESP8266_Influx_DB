@@ -38,9 +38,9 @@
 # define INFLUXDB_CLIENT_PLATFORM_VERSION  STR(ARDUINO_ESP32_GIT_DESC)
 #endif
 
-static const char UserAgent[] PROGMEM = "influxdb-client-arduino/" INFLUXDB_CLIENT_VERSION " (" INFLUXDB_CLIENT_PLATFORM " " INFLUXDB_CLIENT_PLATFORM_VERSION ")";
+static const char *UserAgent PROGMEM = "influxdb-client-arduino/" INFLUXDB_CLIENT_VERSION " (" INFLUXDB_CLIENT_PLATFORM " " INFLUXDB_CLIENT_PLATFORM_VERSION ")";
 
-// Uncomment bellow in case of a problem and rebuild sketch
+// Uncomment bellow in case of a problem and rebuild your sketch
 //#define INFLUXDB_CLIENT_DEBUG
 
 #ifdef INFLUXDB_CLIENT_DEBUG
@@ -145,16 +145,16 @@ void  Point::setTime(String timestamp) {
 }
 
 void  Point::clearFields() {
-    _fields = "";
-    _timestamp = "";
+    _fields = (char *)nullptr;
+    _timestamp = (char *)nullptr;
 }
 
 void Point:: clearTags() {
-    _tags = "";
+    _tags = (char *)nullptr;
 }
 
 InfluxDBClient::InfluxDBClient() { 
-    _pointsBuffer = new String[_bufferSize];
+    initBuffer();
 }
 
 InfluxDBClient::InfluxDBClient(const char *serverUrl, const char *db):InfluxDBClient() {
@@ -299,18 +299,31 @@ void InfluxDBClient::resetBuffer() {
     if(_pointsBuffer) {
         delete [] _pointsBuffer;
     }
-    _pointsBuffer = new String[_bufferSize];
+    initBuffer();
     _bufferPointer = 0;
     _batchPointer = 0;
     _bufferCeiling = 0;
 }
 
+void InfluxDBClient::initBuffer() {
+     _pointsBuffer = new String*[_bufferSize];
+     for(int i=0;i<_bufferSize;i++) {
+         _pointsBuffer[i] = nullptr;
+     }
+} 
+
+
 void InfluxDBClient::reserveBuffer(int size) {
     if(size > _bufferSize) {
-        String *newBuffer = new String[size];
+        String **newBuffer = new String*[size];
         INFLUXDB_CLIENT_DEBUG("Resising buffer from %d to %d\n", _bufferSize, size);
         for(int i=0;i<_bufferCeiling; i++) {
             newBuffer[i] = _pointsBuffer[i];
+        }
+        if(_bufferCeiling<_bufferSize) {
+            for(int i=0;i<(_bufferSize - _bufferCeiling); i++) {
+                newBuffer[_bufferCeiling+i] = nullptr;
+            }
         }
         
         delete [] _pointsBuffer;
@@ -331,7 +344,7 @@ bool InfluxDBClient::writePoint(Point & point) {
 }
 
 bool InfluxDBClient::writeRecord(String &record) {
-    _pointsBuffer[_bufferPointer] = record;
+    _pointsBuffer[_bufferPointer] = new String(record);
     _bufferPointer++;
     if(_bufferPointer == _bufferSize) {
         _bufferPointer = 0;
@@ -383,6 +396,17 @@ bool InfluxDBClient::flushBuffer() {
         // advance even on message failure (4xx != 429) or server failure (5xx != 503) 
         if(success || !retry) {
             _lastFlushed = millis()/1000;
+            INFLUXDB_CLIENT_DEBUG("[D] Clearing %d points from %d\n", size, _batchPointer);
+            int i = _batchPointer;
+            for(int c=0; c < size; c++) {
+                INFLUXDB_CLIENT_DEBUG("[D]    %d: %x", i, _pointsBuffer[i]);
+                delete _pointsBuffer[i];
+                _pointsBuffer[i] = nullptr;
+                i++;
+                if(i == _bufferSize) {
+                    i = 0;
+                }
+            }
             _batchPointer += size;
             //did we got over top?
             if(_batchPointer >= _bufferSize) {
@@ -437,7 +461,7 @@ char *InfluxDBClient::prepareBatch(int &size) {
     if(size) {
         int i = _batchPointer;
         for(int c=0; c < size; c++) {
-            length += _pointsBuffer[i++].length();
+            length += _pointsBuffer[i++]->length();
             if(i == _bufferSize) {
                 i = 0;
             }
@@ -449,7 +473,7 @@ char *InfluxDBClient::prepareBatch(int &size) {
             buff[0] = 0;
             int i = _batchPointer;
             for(int c=0; c < size; c++) {
-                strcat(buff+strlen(buff), _pointsBuffer[i++].c_str());
+                strcat(buff+strlen(buff), _pointsBuffer[i++]->c_str());
                 strcat(buff+strlen(buff), "\n");
                 if(i == _bufferSize) {
                     i = 0;
