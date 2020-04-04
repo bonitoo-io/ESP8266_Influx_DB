@@ -19,7 +19,7 @@ String chipId = String(ESP.getChipId());
 String deviceName = "ESP8266";
 #endif
 
-#define INFLUXDB_CLIENT_TESTING_URL "http://192.168.88.142:999"
+#define INFLUXDB_CLIENT_TESTING_URL "http://192.168.1.73:999"
 #define INFLUXDB_CLIENT_TESTING_ORG "my-org"
 #define INFLUXDB_CLIENT_TESTING_BUC "my-bucket"
 #define INFLUXDB_CLIENT_TESTING_DB "my-db"
@@ -281,7 +281,7 @@ void testBufferOverwriteBatchsize1() {
         delete p;
     }
     TEST_ASSERT(client.isBufferFull());
-    TEST_ASSERT(client.getBuffer()[0].indexOf("index=10i") > 0);
+    TEST_ASSERT(client.getBuffer()[0]->indexOf("index=10i") > 0);
 
     client.setServerUrl(INFLUXDB_CLIENT_TESTING_URL);
     waitServer(client, true);
@@ -321,7 +321,7 @@ void testBufferOverwriteBatchsize5() {
         delete p;
     }
     TEST_ASSERT(client.isBufferFull());
-    TEST_ASSERT(client.getBuffer()[0].indexOf("index=24i") > 0);
+    TEST_ASSERT(client.getBuffer()[0]->indexOf("index=24i") > 0);
 
     client.setServerUrl(INFLUXDB_CLIENT_TESTING_URL);
     waitServer(client, true);
