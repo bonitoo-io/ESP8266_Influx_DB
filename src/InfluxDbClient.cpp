@@ -221,7 +221,7 @@ bool InfluxDBClient::init() {
     }
     _httpClient.setReuse(false);
 
-    _httpClient.setUserAgent(UserAgent);
+    _httpClient.setUserAgent(FPSTR(UserAgent));
     return true;
 }
 
