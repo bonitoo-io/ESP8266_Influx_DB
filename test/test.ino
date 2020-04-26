@@ -76,13 +76,30 @@ void testPoint() {
     p.addTag("tag1", "tagvalue");
     TEST_ASSERT(p.hasTags());
     TEST_ASSERT(!p.hasFields());
-    p.addField("field1", 23);
+    p.addField("fieldInt", -23);
     TEST_ASSERT(p.hasFields());
-    p.addField("field2", true);
-    p.addField("field3", 1.123);
-    p.addField("field4", "texttest");
+    p.addField("fieldBool", true);
+    p.addField("fieldFloat1", 1.123f);
+    p.addField("fieldFloat2", 1.12345f, 5);
+    p.addField("fieldDouble1", 1.123);
+    p.addField("fieldDouble2", 1.12345, 5);
+    p.addField("fieldChar", 'A');
+    p.addField("fieldUChar", (unsigned char)1);
+    p.addField("fieldUInt", 23u);
+    p.addField("fieldLong", 123456l);
+    p.addField("fieldULong", 123456ul);
+    p.addField("fieldString", "text test");
     String line = p.toLineProtocol();
-    String testLine = "test,tag1=tagvalue field1=23i,field2=true,field3=1.12,field4=\"texttest\"";
+    String testLine = "test,tag1=tagvalue fieldInt=-23i,fieldBool=true,fieldFloat1=1.12,fieldFloat2=1.12345,fieldDouble1=1.12,fieldDouble2=1.12345,fieldChar=\"A\",fieldUChar=1i,fieldUInt=23i,fieldLong=123456i,fieldULong=123456i,fieldString=\"text test\"";
+    TEST_ASSERTM(line == testLine, line);
+
+    p.clearFields();
+    p.clearTags();
+
+    //line protocol without tags
+    p.addField("f", 1);
+    line = p.toLineProtocol();
+    testLine = "test f=1i";
     TEST_ASSERTM(line == testLine, line);
 
     TEST_ASSERT(!p.hasTime());
@@ -175,6 +192,15 @@ void testBasicFunction() {
     String query = "select";
     String q = queryFlux(client.getServerUrl(),INFLUXDB_CLIENT_TESTING_TOK, INFLUXDB_CLIENT_TESTING_ORG, query);
     TEST_ASSERT(countLines(q) == 6);  //5 points+header
+
+    // test precision
+    for (int i = (int)WritePrecision::NoTime; i <= (int)WritePrecision::NS; i++) {
+        client.setWriteOptions((WritePrecision)i, 1);
+        Point *p = createPoint("test1");
+        p->addField("index", i);
+        TEST_ASSERTM(client.writePoint(*p), String("i=") + i);
+        delete p;
+    }
 
     TEST_END();
     deleteAll(INFLUXDB_CLIENT_TESTING_URL);
@@ -768,6 +794,15 @@ void testV1() {
     q = queryFlux(client.getServerUrl(),INFLUXDB_CLIENT_TESTING_TOK, INFLUXDB_CLIENT_TESTING_ORG, query);
     lines = getLines(q, count);
     TEST_ASSERT(count == 16);  
+
+    // test precision
+    for (int i = (int)WritePrecision::NoTime; i <= (int)WritePrecision::NS; i++) {
+        client.setWriteOptions((WritePrecision)i, 1);
+        Point *p = createPoint("test1");
+        p->addField("index", i);
+        TEST_ASSERTM(client.writePoint(*p), String("i=") + i);
+        delete p;
+    }
     TEST_END();
     deleteAll(INFLUXDB_CLIENT_TESTING_URL);
 }

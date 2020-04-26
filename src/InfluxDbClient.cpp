@@ -57,10 +57,10 @@ static String escapeKey(String key);
 static String escapeValue(const char *value);
 static String escapeJSONString(String &value);
 
-static String precisionToString(WritePrecision precision) {
+static String precisionToString(WritePrecision precision, uint8_t version = 2) {
     switch(precision) {
         case WritePrecision::US:
-            return "us";
+            return version==1?"u":"us";
         case WritePrecision::MS:
             return "ms";
         case WritePrecision::NS:
@@ -104,8 +104,14 @@ void Point::putField(String name, String value) {
 }
 
 String Point::toLineProtocol() const {
-    String line =  _measurement + "," + _tags + " " + _fields;
-    if(_timestamp != "") {
+    String line =  _measurement;
+    if(hasTags()) {
+        line += "," + _tags;
+    }
+    if(hasFields()) {
+        line += " " + _fields;
+    }
+    if(hasTime()) {
         line += " " + _timestamp;
     }
     return line;
@@ -266,7 +272,7 @@ void InfluxDBClient::setUrls() {
         }
     }
     if(_writePrecision != WritePrecision::NoTime) {
-        _writeUrl += String("&precision=") + precisionToString(_writePrecision);
+        _writeUrl += String("&precision=") + precisionToString(_writePrecision, _dbVersion);
     }
     
 }
