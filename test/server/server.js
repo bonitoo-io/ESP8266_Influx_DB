@@ -6,6 +6,7 @@ const app = express();
 const port = 999;
 var pointsdb = []; 
 var lastUserAgent = '';
+var chunked = false;
 
 app.use (function(req, res, next) {
     var data='';
@@ -15,7 +16,7 @@ app.use (function(req, res, next) {
     });
 
     req.on('end', function() {
-        req.body = parsePoints(data);
+        req.body = data;
         next();
     });
 });
@@ -23,6 +24,10 @@ app.get('/test/user-agent', (req,res) => {
     res.status(200).send(lastUserAgent);
 })
 app.get('/ready', (req,res) => {
+    lastUserAgent = req.get('User-Agent');
+    res.status(200).send("<html><body><h1>OK</h1></body></html>");
+})
+app.get('/health', (req,res) => {
     lastUserAgent = req.get('User-Agent');
     res.status(200).send("<html><body><h1>OK</h1></body></html>");
 })
@@ -35,10 +40,17 @@ app.get('/ping', (req,res) => {
         res.status(204).end();
     }
 })
+app.post('/log', (req,res) => {
+    console.log(req.body);
+    res.status(204).end();
+})
 
 app.post('/api/v2/write', (req,res) => {
+    chunked = false;
     if(checkWriteParams(req, res) && handleAuthentication(req, res)) {
-        var points = req.body;
+        //console.log('Write');
+        //console.log(req.body);
+        var points = parsePoints(req.body);
         if(Array.isArray(points) && points.length > 0) {
             var point = points[0];
             if(point.tags.hasOwnProperty('direction')) {
@@ -46,6 +58,7 @@ app.post('/api/v2/write', (req,res) => {
                     case '429-1':
                         res.set("Retry-After","30");
                         res.status(429).send("Limit exceeded"); 
+                        console.log('Retry-After 30');
                         break;
                     case '429-2':
                          res.status(429).send("Limit exceeded"); 
@@ -53,9 +66,10 @@ app.post('/api/v2/write', (req,res) => {
                     case '503-1':
                         res.set("Retry-After","10");
                         res.status(503).send("Server overloaded"); 
+                        console.log('Retry-After 10');
                         break;
                     case '503-2':
-                        console.log('Return');
+                        console.log('Server overloaded');
                         res.status(503).send("Server overloaded"); 
                         break;
                     case 'delete-all':
@@ -69,6 +83,9 @@ app.post('/api/v2/write', (req,res) => {
                     case '500':
                         points = [];
                         res.status(500).send("internal server error");
+                        break;
+                    case 'chunked':
+                        chunked = true;
                         break;
                 }
                 points.shift();
@@ -91,7 +108,7 @@ app.post('/api/v2/write', (req,res) => {
 
 app.post('/write', (req,res) => {
     if(checkWriteParamsV1(req, res) ) {
-        var points = req.body;
+        var points = parsePoints(req.body);
         if(Array.isArray(points) && points.length > 0) {
             var point = points[0];
             if(point.tags.hasOwnProperty('direction')) {
@@ -133,13 +150,115 @@ app.post('/api/v2/delete', (req,res) => {
     res.status(204).end(); 
 });
 
+var queryRes = {
+    "singleTable":`#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,1.4,f,test,1,adsfasdf
+,,1,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,3,adsfasdf
+\r 
+`,
+    "nil-value": `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,,f,test,1,adsfasdf
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,6.6,f,test,,adsfasdf
+,,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:11:32.225467895Z,1122.45,f,test,3,
+\r
+`,
+"multiTables":`#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,unsignedLong,string,string,string,string
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,_result,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,14,f,test,1,adsfasdf
+,_result,0,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.850214724Z,66,f,test,1,adsfasdf
+\r
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string,string
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,_result1,1,2020-02-16T22:19:49.747562847Z,2020-02-17T22:19:49.747562847Z,2020-02-17T10:34:08.135814545Z,-4,i,test,1,adsfasdf
+,_result1,1,2020-02-16T22:19:49.747562847Z,2020-02-17T22:19:49.747562847Z,2020-02-16T22:08:44.850214724Z,-1,i,test,1,adsfasdf
+\r
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,bool,string,string,string,string
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,_result2,2,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T10:34:08.135814545Z,false,b,test,0,brtfgh
+,_result2,2,2020-02-17T22:19:49.747562847Z,2020-02-18T22:19:49.747562847Z,2020-02-18T22:08:44.969100374Z,true,b,test,0,brtfgh
+\r
+#datatype,string,long,dateTime:RFC3339Nano,dateTime:RFC3339Nano,dateTime:RFC3339Nano,duration,string,string,string,base64Binary
+,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,_result3,3,2020-02-10T22:19:49.747562847Z,2020-02-12T22:19:49.747562847Z,2020-02-11T10:34:08.135814545Z,1d2h3m4s,d,test,0,eHh4eHhjY2NjY2NkZGRkZA==
+,_result3,3,2020-02-10T22:19:49.747562847Z,2020-02-12T22:19:49.747562847Z,2020-02-12T22:08:44.969100374Z,22h52s,d,test,0,ZGF0YWluYmFzZTY0
+\r
+`,
+"diffNum-data":`#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,duration,base64Binary,dateTime:RFC3339
+,result,table,_start,_stop,_time,deviceId,sensor,elapsed,note,start
+,,0,2020-04-28T12:36:50.990018157Z,2020-04-28T12:51:50.990018157Z,2020-04-28T12:38:11.480545389Z,1467463,BME280,1m1s,ZGF0YWluYmFzZTY0,2020-04-27T00:00:00Z,2345234
+\r
+`,
+"diffNum-type-vs-header":`#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,duration,base64Binary,dateTime:RFC3339
+,result,table,_start,_stop,_time,deviceId,sensor,elapsed,note
+,,0,2020-04-28T12:36:50.990018157Z,2020-04-28T12:51:50.990018157Z,2020-04-28T12:38:11.480545389Z,1467463,BME280,1m1s,ZGF0YWluYmFzZTY0,2020-04-27T00:00:00Z
+\r
+`,
+"flux-error":`{"code":"invalid","message":"compilation failed: loc 4:17-4:86: expected an operator between two expressions"}`,
+"invalid-datatype":`#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,int,string,duration,base64Binary,dateTime:RFC3339
+,result,table,_start,_stop,_time,deviceId,sensor,elapsed,note,start
+,,0,2020-04-28T12:36:50.990018157Z,2020-04-28T12:51:50.990018157Z,2020-04-28T12:38:11.480545389Z,1467463,BME280,1m1s,ZGF0YWluYmFzZTY0,2020-04-27T00:00:00Z
+,,0,2020-04-28T12:36:50.990018157Z,2020-04-28T12:51:50.990018157Z,2020-04-28T12:39:36.330153686Z,1467463,BME280,1h20m30.13245s,eHh4eHhjY2NjY2NkZGRkZA==,2020-04-28T00:00:00Z
+\r
+`,
+"missing-datatype":`,result,table,_start,_stop,_time,_value,_field,_measurement,a,b
+,_result3,3,2020-02-10T22:19:49.747562847Z,2020-02-12T22:19:49.747562847Z,2020-02-11T10:34:08.135814545Z,1d2h3m4s,d,test,0,eHh4eHhjY2NjY2NkZGRkZA==
+,_result3,3,2020-02-10T22:19:49.747562847Z,2020-02-12T22:19:49.747562847Z,2020-02-12T22:08:44.969100374Z,22h52s,d,test,0,eHh4eHhjY2NjY2NkZGRkZA==
+\r
+`,
+"error-it-row-full":`#datatype,string,string
+,error,reference
+,failed to create physical plan: invalid time bounds from procedure from: bounds contain zero time,897
+\r
+`,
+"error-it-row-no-reference":`#datatype,string,string
+,error,reference
+,failed to create physical plan: invalid time bounds from procedure from: bounds contain zero time,
+\r
+`,
+"error-it-row-no-message":`#datatype,string,string
+,error,reference
+,,
+\r
+`,
+"empty":``
+};
+
 app.post('/api/v2/query', (req,res) => {
+    //console.log("Query with: " + req.body);
     if(checkQueryParams(req, res) && handleAuthentication(req, res)) {
-        if(pointsdb.length > 0) {
+        var queryObj = JSON.parse(req.body);
+        var data = '';
+        var status = 200;
+        if (queryObj["query"].startsWith('testquery-')) {
+            var qi =  queryObj["query"].substring(10) ;
+            console.log('query: ' + qi + ' dataset');
+            if(qi.endsWith('error')) {
+                status = 400;
+            }
+            data = queryRes[qi];
+        } else if(pointsdb.length > 0) {
             console.log('query: ' + pointsdb.length + ' points');
-            res.status(200).send(convertToCSV(pointsdb));
+            data = convertToCSV(pointsdb);
+        }
+        if(data.length > 0) {
+            //console.log(data);
+
+            if(chunked) {
+                var i = data.length/3;
+                res.set("Transfer-Encoding","chunked");
+                res.status(status);
+                res.write(data.substring(0, i+1));
+                res.write(data.substring(i+1, 2*i+1));
+                res.write(data.substring(2*i+1));
+                res.end();
+                chunked = false;
+            } else {
+                res.status(status).send(data);
+            }
         } else {
-            res.status(200).end();
+            res.status(status).end();
         }
     }
 });
@@ -223,7 +342,7 @@ function parsePoints(data) {
 const AuthToken = "Token 1234567890";
 function handleAuthentication(req, res) {
     var auth = req.get('Authorization');
-    if(auth != AuthToken) {
+    if(auth && auth != AuthToken) {
         res.status(401).send(`{"code":"unauthorized","message":"unauthorized access"}`);
         return false;
     } else {
@@ -267,7 +386,7 @@ function checkWriteParamsV1(req, res) {
 
 function checkQueryParams(req, res) {
     var org = req.query['org'];
-    if(org != 'my-org') {
+    if(org && org !== 'my-org') {
         res.status(404).send(`{"code":"not found","message":"organization name \"${org}\" not found"}`);
         return false;
     } else {
@@ -275,17 +394,22 @@ function checkQueryParams(req, res) {
     }
 }
 
-function objectToCSV(obj, header) {
+function objectToCSV(obj, type, level) {
     var line = '';
+    if(level == 1) line = type==0?'#datatype,':',';
+    var i = 0;
     for (var index in obj) {
-        if (line != '') line += ','
+        if (i>0) line += ',';
         if(typeof obj[index] == 'object') {
-            line += objectToCSV(obj[index], header);
-        } else if(header) {
+            line += objectToCSV(obj[index], type, level+1);
+        } else if(type == 0) { //datatype header
+            line += 'string';
+        } else if(type == 1) {
             line += index;
         } else {
             line += obj[index];
         }
+        i++;
     }
     return line;
 }
@@ -295,12 +419,13 @@ function convertToCSV(objArray) {
     var str = '';
 
     if(array.length > 0) {
-        str = objectToCSV(array[0], true) + '\r\n';
+        str = objectToCSV(array[0], 0, 1) + '\r\n';
+        str += objectToCSV(array[0], 1, 1) + '\r\n';
     }
 
     for (var i = 0; i < array.length; i++) {
         var line = '';
-        line = objectToCSV(array[i], false);
+        line = objectToCSV(array[i], 2, 1);
         
         str += line + '\r\n';
     }

@@ -27,21 +27,24 @@
 #ifndef _INFLUXDB_CLIENT_H_
 #define _INFLUXDB_CLIENT_H_
 
-#define INFLUXDB_CLIENT_VERSION "3.1.2-memory-tunning"
+#define INFLUXDB_CLIENT_VERSION "3.2.0--memory-tunning"
 
-#include "Arduino.h"
-
+#include <Arduino.h>
 #if defined(ESP8266)
 # include <WiFiClientSecureBearSSL.h>
 # include <ESP8266HTTPClient.h>
 #elif defined(ESP32)
 # include <HTTPClient.h>
 #else
-# error “This library currently supports only ESP8266 and ESP32.”
+# error "This library currently supports only ESP8266 and ESP32."
 #endif
 
+#include "query/FluxParser.h"
+#include "util/helpers.h"
+
+
 #ifdef USING_AXTLS
-#error AxTLS doesn't work
+#error AxTLS does not work
 #endif
 
 // Enum WritePrecision defines constants for specifying InfluxDB write prcecision
@@ -81,9 +84,9 @@ class Point {
     void addField(String name, const char *value);
     // Set timestamp to `now()` and store it in specified precision, nanoseconds by default. Date and time must be already set. See `configTime` in the device API
     void setTime(WritePrecision writePrecision = WritePrecision::NS);
-    // Set timestamp in seconds since epoch (1.1.1970). Precision should be set to `S` 
-    void setTime(unsigned long seconds);
-    // Set timestamp in desired precision (specified in InfluxDBClient) since epoch (1.1.1970 00:00:00)
+    // Set timestamp in offset since epoch (1.1.1970). Correct precision must be set InfluxDBClient::setWriteOptions.
+    void setTime(unsigned long long timestamp);
+    // Set timestamp in offset since epoch (1.1.1970 00:00:00). Correct precision must be set InfluxDBClient::setWriteOptions.
     void setTime(String timestamp);
     // Clear all fields. Usefull for reusing point  
     void clearFields();
@@ -93,10 +96,12 @@ class Point {
     bool hasFields() const { return _fields.length() > 0; }
     // True if a point contains at least one tag
     bool hasTags() const   { return _tags.length() > 0; }
-     // True if a point contains timestamp
+    // True if a point contains timestamp
     bool hasTime() const   { return _timestamp.length() > 0; }
     // Creates line protocol
     String toLineProtocol() const;
+    // returns current timestamp
+    String getTime() const { return _timestamp; } 
   protected:
     String _measurement;
     String _tags;
@@ -134,6 +139,9 @@ class InfluxDBClient {
     InfluxDBClient(const char *serverUrl, const char *org, const char *bucket, const char *authToken, const char *certInfo);
     // Clears instance.
     ~InfluxDBClient();
+    // Allows insecure connection
+    // Works only on ESP8266. No-op for ESP32
+    void setInsecure(bool value);
     // precision - timestamp precision of written data
     // batchSize - number of points that will be written to the databases at once. Default 1 - writes immediately
     // bufferSize - maximum size of Points buffer. Buffer contains new data that will be written to the database
@@ -165,6 +173,10 @@ class InfluxDBClient {
     // Writes record represented by Point to buffer
     // Returns true if successful, false in case of any error 
     bool writePoint(Point& point);
+    // Sends Flux query and returns FluxQueryResult object for subsequentialy reading flux query response.
+    // Use FluxQueryResult::next() method to iterate over lines of the query result.
+    // Always call of FluxQueryResult::close() when reading is finished. Check FluxQueryResult doc for more info.
+    FluxQueryResult query(String fluxQuery);
     // Writes all points in buffer, with respect to the batch size, and in case of success clears the buffer.
     // Returns true if successful, false in case of any error 
     bool flushBuffer();
@@ -205,6 +217,8 @@ class InfluxDBClient {
     String _password;
     // Cached full write url
     String _writeUrl;
+    // Cached full query url
+    String _queryUrl;
     // Points timestamp precision. 
     WritePrecision _writePrecision = WritePrecision::NoTime;
     // Number of points that will be written to the databases at once. 
@@ -242,8 +256,10 @@ class InfluxDBClient {
 #ifdef  ESP8266
   BearSSL::X509List *_cert = nullptr;   
 #endif
+    // if true - allow insecure connection
+    bool _insecure = 0;
     // Store retry timeout suggested by server after last request
-    int _lastRetryAfter;
+    int _lastRetryAfter = 0;
     // Sends POST request with data in body
     int postData(const char *data);
     // Prepares batch from data in buffer`
